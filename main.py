@@ -83,8 +83,9 @@ class Functions:
         s1, s2, bw = int(s1), int(s2), int(bw)
         router1 = list(map(lambda q: q.id == s1, routers))[0]
         router2 = list(map(lambda q: q.id == s2, routers))[0]
+        # fixme don't add duplicate links
         if len(graph.neighbors(s1)) >= 10 or len(graph.neighbors(s2)) >= 10:
-            cprint("no empty interface found.")
+            cprint("no empty interface found on router.")
             return
 
         links.append(Link(router1, router2, bw))
@@ -95,7 +96,11 @@ class Functions:
 
     @staticmethod
     def link(cmd: str):
-        pass
+        _, s1, s2, d = cmd.split()
+        s1, s2, d = int(s1), int(s2), d == 'd'
+
+        link = list(map(lambda q: s1 in q.sides and s2 in q.sides, links))[0]
+        link.up = d
 
     @staticmethod
     def ping(cmd: str):
