@@ -1,6 +1,7 @@
 import readline
-from termcolor import cprint, colored
 import networkx as nx
+from threading import Thread, Semaphore
+from termcolor import cprint, colored
 
 graph = nx.Graph()
 routers = []
@@ -28,13 +29,6 @@ class MyCompleter(object):
             return None
 
 
-class Packet:
-    def __init__(self, msg, sender, receiver):
-        self.msg = msg
-        self.sender = sender
-        self.receiver = receiver
-
-
 class Client:
     ids = 0
 
@@ -50,9 +44,77 @@ class Client:
 class Router:
     def __init__(self, n: int):
         self.id = n
-        self.neighbors = None  # not implemented
-        self.LSDB = None  # not implemented
-        self.routing_table = None  # not implemented
+        self.sec = 0
+        self.neighbors = {}  # not implemented
+        self.LSDB = nx.Graph()  # not implemented
+        self.routing_table = {}  # not implemented
+
+        self.inp = []
+        self.inp_sem = Semaphore(value=0)
+        self.rcv_trd = Thread(target=self.receive, daemon=True)
+        self.rcv_trd.start()
+
+        self.nbr_in = None
+        self.nbr_sem = Semaphore(value=0)
+
+    def neighboring(self, dst, starter=False):
+        # down
+        if starter:
+            self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+            self.nbr_sem.acquire()
+            self.neighbors[self.nbr_in.msg['id']] = self.sec
+            # 2_way
+            self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+        else:
+            self.nbr_sem.acquire()
+            self.neighbors[self.nbr_in.msg['id']] = self.sec
+            # init
+            self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+            self.nbr_sem.acquire()
+            # 2_way
+
+        self.send(Packet(self.LSDB, 'DBD', self, dst, nbr=True))
+        self.nbr_sem.acquire()
+        self.LSDB.update(self.nbr_in.msg)
+        # full
+
+    def give(self, pkt):
+        self.inp.append(pkt)
+        self.inp_sem.release()
+
+    def send(self, pkt):
+        graph.edges.get((self.id, pkt.receiver))['object'].deliver(pkt)
+
+    def receive(self):
+        self.inp_sem.acquire()
+        pkt = self.inp.pop()
+        if pkt.nbr:
+            self.nbr_in = pkt
+            self.nbr_in.release()
+        else:
+            pass  # not implemented
+
+    def sec_passed(self):
+        self.sec += 1
+        if self.sec % 10 == 0:
+            for k in self.neighbors.keys():
+                self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self,
+                                 graph.nodes.get(k)['object']))
+        if self.sec % 30 == 1:
+            for k, v in self.neighbors.items():
+                if self.sec - v > 30:
+                    for d in self.neighbors.items():
+                        if k == d:
+                            continue
+                        self.send(Packet(None, 'lsa', self, graph.nodes.get(d)['object']))
+
+class Packet:
+    def __init__(self, msg, typ: str, sender: Router, receiver: Router, nbr=False):
+        self.msg = msg
+        self.type = typ
+        self.sender = sender
+        self.receiver = receiver
+        self.nbr = nbr
 
 
 class Link:
@@ -60,6 +122,16 @@ class Link:
         self.sides = [s1, s2]
         self.bw = bw
         self.up = True
+
+    def deliver(self, pkt: Packet):
+        if not self.up:
+            return
+        if pkt.receiver.id == self.sides[0].id:
+            self.sides[0].give(pkt)
+        elif pkt.receiver.id == self.sides[1].id:
+            self.sides[1].give(pkt)
+        else:
+            raise Exception("not valid destination for this link")
 
 
 class Functions:
@@ -74,23 +146,26 @@ class Functions:
         if graph.has_node(n):
             cprint("router %d exists" % n, 'red')
             return
-        routers.append(Router(n))
-        graph.add_node(n)
+        graph.add_node(n, object=Router(n))
         # todo check remained
 
     @staticmethod
     def connect(cmd: str):
         _, s1, s2, bw = cmd.split()
         s1, s2, bw = int(s1), int(s2), int(bw)
-        router1 = list(map(lambda q: q.id == s1, routers))[0]
-        router2 = list(map(lambda q: q.id == s2, routers))[0]
-        # fixme don't add duplicate links
-        if len(graph.neighbors(s1)) >= 10 or len(graph.neighbors(s2)) >= 10:
-            cprint("no empty interface found on router.")
+        router1 = graph.nodes.get(s1)['object']
+        router2 = graph.nodes.get(s2)['object']
+
+        if graph.edges.get((s1, s2)):
+            cprint("link already exists between %d and %d." % (s1, s2), 'yellow')
             return
 
-        links.append(Link(router1, router2, bw))
-        graph.add_weighted_edges_from([(s1, s2, bw)])
+        if len(graph.neighbors(s1)) >= 10 or len(graph.neighbors(s2)) >= 10:
+            cprint("no empty interface found on router.", 'yellow')
+            return
+
+        link = Link(router1, router2, bw)
+        graph.add_edge(s1, s2, weight=bw, object=link)
 
         # todo neighboring process
         # todo check remained
@@ -99,9 +174,7 @@ class Functions:
     def link(cmd: str):
         _, s1, s2, en = cmd.split()
         s1, s2, en = int(s1), int(s2), en == 'e'
-
-        link = list(map(lambda q: s1 in q.sides and s2 in q.sides, links))[0]
-        link.up = en
+        graph.edges.get((s1, s2))['object'].up = en
 
     @staticmethod
     def ping(cmd: str):
