@@ -5,6 +5,7 @@ import networkx as nx
 graph = nx.Graph()
 routers = []
 links = []
+monitor = False
 
 
 class MyCompleter(object):
@@ -64,7 +65,7 @@ class Link:
 class Functions:
     @staticmethod
     def sec(cmd: str):
-        pass
+        pass  # not implemented
 
     @staticmethod
     def add(cmd: str):
@@ -96,23 +97,28 @@ class Functions:
 
     @staticmethod
     def link(cmd: str):
-        _, s1, s2, d = cmd.split()
-        s1, s2, d = int(s1), int(s2), d == 'd'
+        _, s1, s2, en = cmd.split()
+        s1, s2, en = int(s1), int(s2), en == 'e'
 
         link = list(map(lambda q: s1 in q.sides and s2 in q.sides, links))[0]
-        link.up = d
+        link.up = en
 
     @staticmethod
     def ping(cmd: str):
-        pass
+        pass  # not implemented
 
     @staticmethod
     def monitor(cmd: str):
-        pass
+        global monitor
+        en = cmd.split()[1] == 'e'
+        if en:
+            monitor = True
+        else:
+            monitor = False
 
 
 if __name__ == '__main__':
-    completer = MyCompleter(["sec ", "add router ", "connect ", "link ", "ping ", "monitor"])
+    completer = MyCompleter(["sec ", "add router ", "connect ", "link ", "ping ", "monitor e", "monitor d"])
     readline.set_completer(completer.complete)
     readline.parse_and_bind('tab: complete')
 
