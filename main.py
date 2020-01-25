@@ -88,25 +88,45 @@ class Router:
     def receive(self):
         self.inp_sem.acquire()
         pkt = self.inp.pop()
+
         if pkt.nbr:
             self.nbr_in = pkt
-            self.nbr_in.release()
+            self.nbr_sem.release()
+
+        elif pkt.typ == 'hello':
+            self.neighbors[pkt.receiver.id] = self.sec
+
+        elif pkt.typ.lower() == 'lsa':
+            a, b = pkt.msg
+            if self.LSDB.has_edge(a, b):
+                self.LSDB.remove_edge(a, b)
+                for d in self.neighbors.items():
+                    if pkt.sender == d:
+                        continue
+                    self.send(Packet(pkt.msg, 'lsa', self, graph.nodes.get(d)['object']))
+
         else:
             pass  # not implemented
 
     def sec_passed(self):
         self.sec += 1
+
+        # send hello to neighbors
         if self.sec % 10 == 0:
             for k in self.neighbors.keys():
                 self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self,
                                  graph.nodes.get(k)['object']))
+
+        # check other neighbors
         if self.sec % 30 == 1:
             for k, v in self.neighbors.items():
                 if self.sec - v > 30:
+                    self.LSDB.remove_edge(self.id, k)
                     for d in self.neighbors.items():
                         if k == d:
                             continue
-                        self.send(Packet(None, 'lsa', self, graph.nodes.get(d)['object']))
+                        self.send(Packet((self.id, k), 'lsa', self, graph.nodes.get(d)['object']))
+
 
 class Packet:
     def __init__(self, msg, typ: str, sender: Router, receiver: Router, nbr=False):
