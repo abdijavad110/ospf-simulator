@@ -69,7 +69,14 @@ class Functions:
 
     @staticmethod
     def add(cmd):
-        pass
+        _, _, n = cmd.split()
+        n = int(n)
+        if graph.has_node(n):
+            cprint("router %d exists" % n, 'red')
+            return
+        routers.append(Router(n))
+        graph.add_node(n)
+        # todo check remained
 
     @staticmethod
     def connect(cmd):
@@ -98,7 +105,7 @@ if __name__ == '__main__':
         if inp == '':
             continue
         try:
-            getattr(Functions, inp.split()[0])
+            getattr(Functions, inp.split()[0]).__call__(inp)
         except AttributeError:
             cprint("no function %s" % inp.split()[0], 'red')
         except Exception as e:
