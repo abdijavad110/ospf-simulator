@@ -2,7 +2,6 @@ import readline
 from termcolor import cprint, colored
 import networkx as nx
 
-
 graph = nx.Graph()
 routers = []
 links = []
@@ -16,13 +15,13 @@ class MyCompleter(object):
     def complete(self, text, state):
         if state == 0:  # on first trigger, build possible matches
             if text:  # cache matches (entries that start with entered text)
-                self.matches = [s for s in self.options 
-                                    if s and s.startswith(text)]
+                self.matches = [s for s in self.options
+                                if s and s.startswith(text)]
             else:  # no text entered, all matches possible
                 self.matches = self.options[:]
 
         # return match indexed by state
-        try: 
+        try:
             return self.matches[state]
         except IndexError:
             return None
@@ -48,15 +47,15 @@ class Client:
 
 
 class Router:
-    def __init__(self, n):
+    def __init__(self, n: int):
         self.id = n
-        self.neighbors = None       # not implemented
-        self.LSDB = None            # not implemented
-        self.routing_table = None   # not implemented
+        self.neighbors = None  # not implemented
+        self.LSDB = None  # not implemented
+        self.routing_table = None  # not implemented
 
 
 class Link:
-    def __init__(self, s1, s2, bw):
+    def __init__(self, s1: Router, s2: Router, bw: int):
         self.sides = [s1, s2]
         self.bw = bw
         self.up = True
@@ -64,11 +63,11 @@ class Link:
 
 class Functions:
     @staticmethod
-    def sec(cmd):
+    def sec(cmd: str):
         pass
 
     @staticmethod
-    def add(cmd):
+    def add(cmd: str):
         _, _, n = cmd.split()
         n = int(n)
         if graph.has_node(n):
@@ -79,19 +78,31 @@ class Functions:
         # todo check remained
 
     @staticmethod
-    def connect(cmd):
+    def connect(cmd: str):
+        _, s1, s2, bw = cmd.split()
+        s1, s2, bw = int(s1), int(s2), int(bw)
+        router1 = list(map(lambda q: q.id == s1, routers))[0]
+        router2 = list(map(lambda q: q.id == s2, routers))[0]
+        if len(graph.neighbors(s1)) >= 10 or len(graph.neighbors(s2)) >= 10:
+            cprint("no empty interface found.")
+            return
+
+        links.append(Link(router1, router2, bw))
+        graph.add_weighted_edges_from([(s1, s2, bw)])
+
+        # todo neighboring process
+        # todo check remained
+
+    @staticmethod
+    def link(cmd: str):
         pass
 
     @staticmethod
-    def link(cmd):
+    def ping(cmd: str):
         pass
 
     @staticmethod
-    def ping(cmd):
-        pass
-
-    @staticmethod
-    def monitor(cmd):
+    def monitor(cmd: str):
         pass
 
 
@@ -111,4 +122,3 @@ if __name__ == '__main__':
         except Exception as e:
             cprint(e.__cause__)
             cprint(e.__traceback__)
-
