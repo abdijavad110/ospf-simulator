@@ -30,15 +30,8 @@ class MyCompleter(object):
 
 
 class Client:
-    ids = 0
-
-    @staticmethod
-    def get_id():
-        Client.ids += 1
-        return Client.ids
-
-    def __init__(self):
-        self.id = Client.get_id()
+    def __init__(self, ip: str):
+        self.ip = ip
 
 
 class Router:
@@ -58,25 +51,27 @@ class Router:
         self.nbr_sem = Semaphore(value=0)
 
     def neighboring(self, dst, starter=False):
-        # down
-        if starter:
-            self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
-            self.nbr_sem.acquire()
-            self.neighbors[self.nbr_in.msg['id']] = self.sec
-            # 2_way
-            self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
-        else:
-            self.nbr_sem.acquire()
-            self.neighbors[self.nbr_in.msg['id']] = self.sec
-            # init
-            self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
-            self.nbr_sem.acquire()
-            # 2_way
+        def non_blocking():
+            # down
+            if starter:
+                self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+                self.nbr_sem.acquire()
+                self.neighbors[self.nbr_in.msg['id']] = self.sec
+                # 2_way
+                self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+            else:
+                self.nbr_sem.acquire()
+                self.neighbors[self.nbr_in.msg['id']] = self.sec
+                # init
+                self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+                self.nbr_sem.acquire()
+                # 2_way
 
-        self.send(Packet(self.LSDB, 'DBD', self, dst, nbr=True))
-        self.nbr_sem.acquire()
-        self.LSDB.update(self.nbr_in.msg)
-        # full
+            self.send(Packet(self.LSDB, 'DBD', self, dst, nbr=True))
+            self.nbr_sem.acquire()
+            self.LSDB.update(self.nbr_in.msg)
+            # full
+        Thread(target=non_blocking).start()
 
     def give(self, pkt):
         self.inp.append(pkt)
@@ -157,17 +152,30 @@ class Link:
 class Functions:
     @staticmethod
     def sec(cmd: str):
-        pass  # not implemented
+        _, t = cmd.split()
+        t = int(t)
+        for _ in range(t):
+            for n in graph.nodes.values():
+                if n['typ'] == 'router':
+                    n['object'].sec_passed()
 
     @staticmethod
-    def add(cmd: str):
+    def add_router(cmd: str):
         _, _, n = cmd.split()
         n = int(n)
         if graph.has_node(n):
             cprint("router %d exists" % n, 'red')
             return
-        graph.add_node(n, object=Router(n))
+        graph.add_node(n, object=Router(n), typ='router')
         # todo check remained
+
+    @staticmethod
+    def add_client(cmd: str):
+        _, _, ip = cmd.split()
+        if graph.has_node(ip):
+            cprint("client %s exists" % ip, 'red')
+            return
+        graph.add_node(ip, object=Client(ip), typ='client')
 
     @staticmethod
     def connect(cmd: str):
@@ -187,7 +195,9 @@ class Functions:
         link = Link(router1, router2, bw)
         graph.add_edge(s1, s2, weight=bw, object=link)
 
-        # todo neighboring process
+        router1.neighboring(router2, starter=True)
+        router2.neighboring(router1, starter=True)
+
         # todo check remained
 
     @staticmethod
@@ -219,10 +229,14 @@ if __name__ == '__main__':
         inp = input(colored(">>> ", 'green'))
         if inp == '':
             continue
+        elif inp.startswith('add'):
+            func = inp.split()[0] + '_' + inp.split()[1]
+        else:
+            func = inp.split()[0]
         try:
-            getattr(Functions, inp.split()[0]).__call__(inp)
+            getattr(Functions, func).__call__(inp)
         except AttributeError:
-            cprint("no function %s" % inp.split()[0], 'red')
+            cprint("no function %s" % func, 'red')
         except Exception as e:
             cprint(e.__cause__)
             cprint(e.__traceback__)
