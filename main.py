@@ -1,7 +1,9 @@
 import readline
+import traceback
 import networkx as nx
-from threading import Thread, Semaphore
+from time import sleep
 from termcolor import cprint, colored
+from threading import Thread, Semaphore
 
 graph = nx.Graph()
 routers = []
@@ -32,15 +34,17 @@ class MyCompleter(object):
 class Client:
     def __init__(self, ip: str):
         self.ip = ip
+        self.router = None
 
 
 class Router:
     def __init__(self, n: int):
         self.id = n
         self.sec = 0
-        self.neighbors = {}  # not implemented
-        self.LSDB = nx.Graph()  # not implemented
-        self.routing_table = {}  # not implemented
+        self.neighbors = {}
+        self.LSDB = nx.Graph()
+        self.LSDB.add_node(self.id, object=self, typ='router')
+        self.routing_table = {}
 
         self.inp = []
         self.inp_sem = Semaphore(value=0)
@@ -59,6 +63,7 @@ class Router:
                 self.neighbors[self.nbr_in.msg['id']] = self.sec
                 # 2_way
                 self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
+                sleep(.1)
             else:
                 self.nbr_sem.acquire()
                 self.neighbors[self.nbr_in.msg['id']] = self.sec
@@ -70,38 +75,85 @@ class Router:
             self.send(Packet(self.LSDB, 'DBD', self, dst, nbr=True))
             self.nbr_sem.acquire()
             self.LSDB.update(self.nbr_in.msg)
+            self.dijkstra()
+            self.flood(Packet(self.LSDB, 'lsa', self, self, lsdb=True), [dst.id])
             # full
-        Thread(target=non_blocking).start()
+
+        Thread(target=non_blocking, daemon=True).start()
+
+    def dijkstra(self):
+        self.routing_table = {}
+        dijkstra = nx.single_source_dijkstra_path(self.LSDB, self.id, weight='weight')  # TODO check if weight based
+        for k, v in dijkstra.items():
+            if type(k) == str:
+                self.routing_table[k] = v[1]
 
     def give(self, pkt):
         self.inp.append(pkt)
         self.inp_sem.release()
 
     def send(self, pkt):
-        graph.edges.get((self.id, pkt.receiver))['object'].deliver(pkt)
+        graph.edges.get((self.id, pkt.receiver.id))['object'].deliver(pkt)
 
     def receive(self):
-        self.inp_sem.acquire()
-        pkt = self.inp.pop()
+        while True:
+            self.inp_sem.acquire()
+            pkt = self.inp.pop()
+            if monitor:
+                print('%d:' % self.id, pkt)
 
-        if pkt.nbr:
-            self.nbr_in = pkt
-            self.nbr_sem.release()
+            if pkt.nbr:
+                self.nbr_in = pkt
+                self.nbr_sem.release()
 
-        elif pkt.typ == 'hello':
-            self.neighbors[pkt.receiver.id] = self.sec
+            elif pkt.type == 'hello':
+                if pkt.sender.id not in self.neighbors.keys():
+                    self.LSDB.add_edge(pkt.sender.id, pkt.receiver.id,
+                                       weight=graph.edges[pkt.sender.id, pkt.receiver.id]['weight'],
+                                       object=graph.edges[pkt.sender.id, pkt.receiver.id]['object'])
+                    self.flood(Packet((self.id, pkt.sender.id, True), 'lsa', self, self))
+                    self.dijkstra()
+                self.neighbors[pkt.sender.id] = self.sec
+                if not self.LSDB.has_edge(pkt.sender.id, self.id):
+                    self.LSDB.add_edge(self.id, pkt.sender.id, object=graph.edges[self.id, pkt.sender.id]['object'],
+                                       weight=graph.edges[self.id, pkt.sender.id]['weight'])
+                    self.flood(Packet(self.LSDB, 'lsa', self, self, lsdb=True))
+                    self.dijkstra()
 
-        elif pkt.typ.lower() == 'lsa':
-            a, b = pkt.msg
-            if self.LSDB.has_edge(a, b):
-                self.LSDB.remove_edge(a, b)
-                for d in self.neighbors.items():
-                    if pkt.sender == d:
+            elif pkt.type.lower() == 'lsa':
+                if pkt.lsdb:
+                    if pkt.msg.nodes == self.LSDB.nodes and pkt.msg.edges == self.LSDB.edges:
                         continue
-                    self.send(Packet(pkt.msg, 'lsa', self, graph.nodes.get(d)['object']))
+                    self.LSDB.update(pkt.msg)
+                    self.dijkstra()
+                    self.flood(Packet(self.LSDB, 'lsa', self, self, lsdb=True), [pkt.sender.id])
+                else:
+                    a, b, add = pkt.msg
+                    if not add and self.LSDB.has_edge(a, b):
+                        self.LSDB.remove_edge(a, b)
+                        self.dijkstra()
+                    elif add and not self.LSDB.has_edge(a, b):
+                        self.LSDB.add_edge(a, b, weight=graph.edges[a, b]['weight'], object=graph.edges[a, b]['object'])
+                        self.dijkstra()
+                    else:
+                        continue
+                    self.flood(Packet(pkt.msg, 'lsa', self, self), [pkt.sender.id, pkt.msg[0], pkt.msg[1]])
 
-        else:
-            pass  # not implemented
+
+            elif pkt.type.lower() == 'ping':
+                print(colored(self.id, 'yellow'), end=" ")
+                try:
+                    dst = self.routing_table[pkt.msg]
+                except KeyError:
+                    cprint("invalid", 'red')
+                    continue
+                if type(dst) == int:
+                    pkt.sender, pkt.receiver = self, self.LSDB.nodes[dst]['object']
+                    rcvd = graph.edges.get((self.id, dst))['object'].deliver(pkt)
+                    if not rcvd:
+                        cprint("unreachable", 'red')
+                else:
+                    print(colored(dst, 'yellow'))
 
     def sec_passed(self):
         self.sec += 1
@@ -113,40 +165,56 @@ class Router:
                                  graph.nodes.get(k)['object']))
 
         # check other neighbors
-        if self.sec % 30 == 1:
-            for k, v in self.neighbors.items():
-                if self.sec - v > 30:
-                    self.LSDB.remove_edge(self.id, k)
-                    for d in self.neighbors.items():
-                        if k == d:
-                            continue
-                        self.send(Packet((self.id, k), 'lsa', self, graph.nodes.get(d)['object']))
+        # deleted_idx = []
+        for k, v in self.neighbors.items():
+            if self.sec - v == 30 and self.LSDB.has_edge(self.id, k):
+                if monitor:
+                    cprint("%d is going to remove (%d, %d)" % (self.id, self.id, k), 'blue')
+                self.LSDB.remove_edge(self.id, k)
+                # deleted_idx.append(k)
+                self.dijkstra()
+                self.flood(Packet((self.id, k, False), 'lsa', self, self), [k])
+        # for k in deleted_idx:
+        #     del self.neighbors[k]
+
+    def flood(self, pkt, ex=[]):
+        for d, _ in self.neighbors.items():
+            if d in ex:
+                continue
+            pkt.receiver = graph.nodes.get(d)['object']
+            self.send(pkt)
 
 
 class Packet:
-    def __init__(self, msg, typ: str, sender: Router, receiver: Router, nbr=False):
+    def __init__(self, msg, typ: str, sender, receiver, nbr=False, lsdb=False):
         self.msg = msg
         self.type = typ
         self.sender = sender
         self.receiver = receiver
         self.nbr = nbr
+        self.lsdb = lsdb
+
+    def __str__(self):
+        return colored("%s %s (from %s)" % (
+            self.type, str(self.msg), self.sender.id if type(self.sender) == Router else self.sender.ip), 'magenta')
 
 
 class Link:
-    def __init__(self, s1: Router, s2: Router, bw: int):
+    def __init__(self, s1, s2, bw: int):
         self.sides = [s1, s2]
         self.bw = bw
         self.up = True
 
     def deliver(self, pkt: Packet):
         if not self.up:
-            return
+            return False
         if pkt.receiver.id == self.sides[0].id:
             self.sides[0].give(pkt)
         elif pkt.receiver.id == self.sides[1].id:
             self.sides[1].give(pkt)
         else:
             raise Exception("not valid destination for this link")
+        return True
 
 
 class Functions:
@@ -158,6 +226,7 @@ class Functions:
             for n in graph.nodes.values():
                 if n['typ'] == 'router':
                     n['object'].sec_passed()
+                    sleep(.003)
 
     @staticmethod
     def add_router(cmd: str):
@@ -172,6 +241,12 @@ class Functions:
     @staticmethod
     def add_client(cmd: str):
         _, _, ip = cmd.split()
+        if len(ip.split('.')) != 4:
+            cprint("malformed IP address", 'red')
+            return
+        for i in ip.split('.'):
+            if not i.isnumeric() or int(i) > 255 or int(i) < 0:
+                cprint("invalid IP address %s" % ip, 'red')
         if graph.has_node(ip):
             cprint("client %s exists" % ip, 'red')
             return
@@ -180,25 +255,41 @@ class Functions:
     @staticmethod
     def connect(cmd: str):
         _, s1, s2, bw = cmd.split()
-        s1, s2, bw = int(s1), int(s2), int(bw)
-        router1 = graph.nodes.get(s1)['object']
-        router2 = graph.nodes.get(s2)['object']
+        s1, s2, bw = int(s1) if s1.isnumeric() else s1, int(s2) if s2.isnumeric() else s2, int(bw)
+
+        so1, s1t = graph.nodes.get(s1)['object'], graph.nodes.get(s1)['typ']
+        so2, s2t = graph.nodes.get(s2)['object'], graph.nodes.get(s2)['typ']
 
         if graph.edges.get((s1, s2)):
-            cprint("link already exists between %d and %d." % (s1, s2), 'yellow')
+            cprint("link already exists between %s and %s." % (str(s1), str(s2)), 'yellow')
             return
 
-        if len(graph.neighbors(s1)) >= 10 or len(graph.neighbors(s2)) >= 10:
+        if len(graph.adj.get(s1)) >= 10 or len(graph.adj.get(s2)) >= 10:
             cprint("no empty interface found on router.", 'yellow')
             return
 
-        link = Link(router1, router2, bw)
-        graph.add_edge(s1, s2, weight=bw, object=link)
+        if s1t == 'router' and s2t == 'router':
+            so1.LSDB.add_node(s2, object=so2, typ='router')
+            so2.LSDB.add_node(s1, object=so1, typ='router')
 
-        router1.neighboring(router2, starter=True)
-        router2.neighboring(router1, starter=True)
+            link = Link(so1, so2, bw)
+            graph.add_edge(s1, s2, weight=bw, object=link)
+            so1.LSDB.add_edge(s1, s2, weight=bw, object=link)
+            so2.LSDB.add_edge(s1, s2, weight=bw, object=link)
 
-        # todo check remained
+            so1.neighboring(so2, starter=True)
+            so2.neighboring(so1)
+
+        else:
+            router, client = (so1, so2) if s1t == 'router' else (so2, so1)
+            if client.router:
+                cprint("client already connected to router %d" % client.router.id)
+                return
+            router.LSDB.add_edge(s1, s2)
+            router.dijkstra()
+            router.flood(Packet(router.LSDB, 'lsa', router, router, lsdb=True))
+            client.router = router
+            graph.add_edge(s1, s2)
 
     @staticmethod
     def link(cmd: str):
@@ -208,7 +299,17 @@ class Functions:
 
     @staticmethod
     def ping(cmd: str):
-        pass  # not implemented
+        _, src, dst = cmd.split()
+        try:
+            src, dst = graph.nodes[src]['object'], graph.nodes[dst]['object']
+        except KeyError:
+            cprint("invalid ips", 'red')
+        cprint(colored(src.ip, 'yellow'), end=' ')
+        router = graph.nodes[src.ip]['object'].router
+        if not router:
+            cprint("unreachable", 'red')
+            return
+        router.give((Packet(dst.ip, 'ping', src, dst)))
 
     @staticmethod
     def monitor(cmd: str):
@@ -221,22 +322,29 @@ class Functions:
 
 
 if __name__ == '__main__':
-    completer = MyCompleter(["sec ", "add router ", "connect ", "link ", "ping ", "monitor e", "monitor d"])
-    readline.set_completer(completer.complete)
-    readline.parse_and_bind('tab: complete')
+    try:
+        completer = MyCompleter(
+            ["sec ", "add ", "router ", "client ", "connect ", "link ", "ping ", "monitor e", "monitor d"])
+        readline.set_completer(completer.complete)
+        readline.parse_and_bind('tab: complete')
 
-    while True:
-        inp = input(colored(">>> ", 'green'))
-        if inp == '':
-            continue
-        elif inp.startswith('add'):
-            func = inp.split()[0] + '_' + inp.split()[1]
-        else:
-            func = inp.split()[0]
-        try:
-            getattr(Functions, func).__call__(inp)
-        except AttributeError:
-            cprint("no function %s" % func, 'red')
-        except Exception as e:
-            cprint(e.__cause__)
-            cprint(e.__traceback__)
+        while True:
+            inp = input(colored(">>> ", 'green'))
+            if inp == '':
+                continue
+            elif inp.startswith('add'):
+                func = inp.split()[0] + '_' + inp.split()[1]
+            else:
+                func = inp.split()[0]
+            try:
+                getattr(Functions, func).__call__(inp)
+                sleep(.1)
+            except AttributeError:
+                cprint("no function %s" % func, 'red')
+            except Exception as e:
+                print(e)
+                print(traceback.print_exc())
+    except KeyboardInterrupt:
+        cprint('\nfinished.', 'cyan')
+    except EOFError:
+        cprint('\nfinished.', 'cyan')
