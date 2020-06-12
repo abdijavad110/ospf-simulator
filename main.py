@@ -1,14 +1,16 @@
 import readline
 import traceback
+import json as js
 import networkx as nx
 from time import sleep
 from termcolor import cprint, colored
 from threading import Thread, Semaphore
 
-graph = nx.Graph()
-routers = []
+commands = []
 links = []
+routers = []
 monitor = False
+graph = nx.Graph()
 
 
 class MyCompleter(object):
@@ -35,6 +37,8 @@ class Client:
     def __init__(self, ip: str):
         self.ip = ip
         self.router = None
+        # dict.__init__(self, ip=self.ip, router=self.router)
+        # dict.__init__(self)
 
 
 class Router:
@@ -53,6 +57,8 @@ class Router:
 
         self.nbr_in = None
         self.nbr_sem = Semaphore(value=0)
+        # dict.__init__(self, id=n, sec=self.sec, neighbors=self.neighbors, routing_table=self.routing_table)
+        # dict.__init__(self)
 
     def neighboring(self, dst, starter=False):
         def non_blocking():
@@ -204,6 +210,8 @@ class Link:
         self.sides = [s1, s2]
         self.bw = bw
         self.up = True
+        # dict.__init__(self, sides=self.sides, bw=self.bw, up=self.up)
+        # dict.__init__(self)
 
     def deliver(self, pkt: Packet):
         if not self.up:
@@ -283,7 +291,7 @@ class Functions:
         else:
             router, client = (so1, so2) if s1t == 'router' else (so2, so1)
             if client.router:
-                cprint("client already connected to router %d" % client.router.id)
+                cprint("client already connected to router %d" % client.router.id, 'yellow')
                 return
             router.LSDB.add_edge(s1, s2)
             router.dijkstra()
@@ -320,30 +328,95 @@ class Functions:
         else:
             monitor = False
 
+    @staticmethod
+    def parse_command(cmd, normal_mode=True):
+        if cmd.startswith('add') or cmd.startswith('dump') or cmd.startswith('load'):
+            func = cmd.split()[0] + '_' + cmd.split()[1]
+        else:
+            func = cmd.split()[0]
+        try:
+            getattr(Functions, func).__call__(cmd)
+            if normal_mode and not cmd.startswith("dump state"):
+                commands.append(cmd)
+            sleep(.1)
+        except AttributeError:
+            cprint("no function %s" % func, 'red')
+        except Exception as e:
+            print(e)
+            print(traceback.print_exc())
+
+    @staticmethod
+    def dump_topology(cmd: str):
+        try:
+            path = cmd.split()[2]
+        except IndexError:
+            path = "topology.json"
+        file = open(path, 'w')
+        dump_data = nx.readwrite.adjacency_data(graph)
+        # fixme: make objects serializable
+        file.write(js.dumps(dump_data))
+        file.close()
+
+    @staticmethod
+    def load_topology(cmd: str):
+        global graph
+        try:
+            path = cmd.split()[2]
+        except IndexError:
+            path = "topology.json"
+        file = open(path, 'r')
+        data = js.loads(file.read())
+        graph = nx.readwrite.adjacency_graph(data)
+        # fixme initiate graph objects
+        file.close()
+
+    @staticmethod
+    def dump_state(cmd: str):
+        try:
+            path = cmd.split()[2]
+        except IndexError:
+            path = "commands.json"
+        file = open(path, 'w')
+        file.write(js.dumps(commands))
+        file.close()
+
+    @staticmethod
+    def load_state(cmd: str):
+        global commands
+        try:
+            path = cmd.split()[2]
+        except IndexError:
+            path = "commands.json"
+        file = open(path, 'r')
+        commands = js.loads(file.read())
+        cprint("loading state:", 'blue')
+        for c in commands:
+            cprint("> " + c, 'cyan')
+            Functions.parse_command(c, normal_mode=False)
+        file.close()
+
+    @staticmethod
+    def restart(cmd: str):
+        global graph, commands, links, routers
+        if input(colored("are you sure? [N/y]", 'magenta')) == 'y':
+            commands = []
+            links = []
+            routers = []
+            graph = nx.Graph()
+
 
 if __name__ == '__main__':
     try:
         completer = MyCompleter(
-            ["sec ", "add ", "router ", "client ", "connect ", "link ", "ping ", "monitor e", "monitor d"])
+            ["sec ", "add ", "router ", "client ", "connect ", "link ", "ping ", "monitor e", "monitor d",
+             "dump topology", "load topology", "dump state", "load state"])
         readline.set_completer(completer.complete)
         readline.parse_and_bind('tab: complete')
 
         while True:
             inp = input(colored(">>> ", 'green'))
-            if inp == '':
-                continue
-            elif inp.startswith('add'):
-                func = inp.split()[0] + '_' + inp.split()[1]
-            else:
-                func = inp.split()[0]
-            try:
-                getattr(Functions, func).__call__(inp)
-                sleep(.1)
-            except AttributeError:
-                cprint("no function %s" % func, 'red')
-            except Exception as e:
-                print(e)
-                print(traceback.print_exc())
+            if inp != '':
+                Functions.parse_command(inp)
     except KeyboardInterrupt:
         cprint('\nfinished.', 'cyan')
     except EOFError:
