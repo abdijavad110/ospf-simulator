@@ -1,16 +1,21 @@
+import os
+import csv
 import readline
 import traceback
 import json as js
 import networkx as nx
 from time import sleep
+from datetime import datetime
 from termcolor import cprint, colored
-from threading import Thread, Semaphore
+from threading import Thread, Semaphore, Lock
 
-commands = []
+logs = []
 links = []
 routers = []
+commands = []
 monitor = False
 graph = nx.Graph()
+log_lock = Lock()
 
 
 class MyCompleter(object):
@@ -99,12 +104,14 @@ class Router:
         self.inp_sem.release()
 
     def send(self, pkt):
+        submit_log(self.id, False, pkt)
         graph.edges.get((self.id, pkt.receiver.id))['object'].deliver(pkt)
 
     def receive(self):
         while True:
             self.inp_sem.acquire()
             pkt = self.inp.pop()
+            submit_log(self.id, True, pkt)
             if monitor:
                 print('%d:' % self.id, pkt)
 
@@ -223,6 +230,16 @@ class Link:
         else:
             raise Exception("not valid destination for this link")
         return True
+
+
+def submit_log(router_id: int, is_in: bool, pkt: Packet):
+    log_lock.acquire()
+    writer.writerow(
+        dict(zip(headers, [(datetime.now() - start_time).__str__(), router_id, is_in,
+                           pkt.sender.id if type(pkt.sender) == Router else pkt.sender.ip,
+                           pkt.receiver.id if type(pkt.receiver) == Router else pkt.receiver.ip, pkt.type, pkt.nbr,
+                           pkt.lsdb, pkt.msg])))
+    log_lock.release()
 
 
 class Functions:
@@ -406,10 +423,25 @@ class Functions:
 
 
 if __name__ == '__main__':
+    start_time = datetime.now()
+    start_time = datetime.now()
+    start_time = datetime.now()
+    start_time = datetime.now()
+    start_time = datetime.now()
+    start_time = datetime.now()
+    start_time = datetime.now()
+    start_time = datetime.now()
+    if not os.path.isdir("logs"):
+        os.mkdir("logs")
+    csv_file = open("logs/packets_log " + datetime.now().__str__() + ".csv", 'w')
+    headers = ['time stamp', 'router', 'received packet?', 'sender', 'receiver', 'type', 'nbr?', 'lsdb?', 'message']
+    writer = csv.DictWriter(csv_file, fieldnames=headers, extrasaction='ignore')
+    writer.writeheader()
+
     try:
         completer = MyCompleter(
             ["sec ", "add ", "router ", "client ", "connect ", "link ", "ping ", "monitor e", "monitor d",
-             "dump topology", "load topology", "dump state", "load state"])
+             "dump ", "load ", "topology", "state", "restart"])
         readline.set_completer(completer.complete)
         readline.parse_and_bind('tab: complete')
 
@@ -421,3 +453,5 @@ if __name__ == '__main__':
         cprint('\nfinished.', 'cyan')
     except EOFError:
         cprint('\nfinished.', 'cyan')
+    finally:
+        csv_file.close()
