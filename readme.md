@@ -1,5 +1,5 @@
-## how to use OSPF simulator
-#### installation and running simulator
+# how to use OSPF simulator
+### installation and running simulator
 
     # git clone https://gitlab.com/abdijavad110/ospf-simulator.git
     # pip install pipenv
@@ -9,7 +9,7 @@
     # python main.py
     
 
-#### commands
+### commands
 
 ##### add router \<id>
 

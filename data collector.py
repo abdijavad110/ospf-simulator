@@ -1,6 +1,7 @@
 import simulator
 
 from time import sleep
+from threading import Thread
 from termcolor import cprint
 from random import choice, randint, choices
 from ipaddress import IPv4Address as ip
@@ -59,7 +60,7 @@ def random_pings(clients, ping_no=1):
 
 def apply_pings(pings):
     for p in pings:
-        do(p)
+        Thread(target=do, args=(p,)).start()
 
 
 if __name__ == '__main__':
@@ -68,6 +69,7 @@ if __name__ == '__main__':
     apply_topology(r_nodes, r_edges, r_clients)
     r_pings = random_pings(r_clients, n_ping)
     apply_pings(r_pings)
+    sleep(2)
     do("dump log 1 0 1")
     do("dump topology")
     do("dump graph")
