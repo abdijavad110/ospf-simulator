@@ -69,7 +69,7 @@ if __name__ == '__main__':
     r_nodes, r_edges, r_clients = random_topology(nn, ne, nc, bwm, bwM)
     r_pings = random_pings(r_clients, n_ping)
     apply_topology(r_nodes, r_edges, r_clients)
-    for _ in range(10):
+    for _ in range(100):
         apply_pings(r_pings)
     sleep(5)
     do("dump log 1 0 1")

@@ -116,7 +116,6 @@ class Router:
         while True:
             self.inp_sem.acquire()
             pkt = self.inp.pop()
-            self.incoming += 1
             self.submit_log(True, pkt)
             if monitor:
                 print('%d:' % self.id, pkt)
@@ -159,6 +158,7 @@ class Router:
                     self.flood(Packet(pkt.msg, 'lsa', self, self), [pkt.sender.id, pkt.msg[0], pkt.msg[1]])
 
             elif pkt.type.lower() == 'ping':
+                self.incoming += 1
                 # print(colored(self.id, 'yellow'), end=" ")
                 try:
                     dst = self.routing_table[pkt.msg]
