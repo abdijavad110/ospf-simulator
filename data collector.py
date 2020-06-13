@@ -65,11 +65,15 @@ def apply_pings(pings):
 
 if __name__ == '__main__':
     nn, ne, nc, bwm, bwM, n_ping = 10, 15, 10, 10, 20, 50
+
     r_nodes, r_edges, r_clients = random_topology(nn, ne, nc, bwm, bwM)
-    apply_topology(r_nodes, r_edges, r_clients)
     r_pings = random_pings(r_clients, n_ping)
-    apply_pings(r_pings)
-    sleep(2)
+    apply_topology(r_nodes, r_edges, r_clients)
+    for _ in range(10):
+        apply_pings(r_pings)
+    sleep(5)
     do("dump log 1 0 1")
     do("dump topology")
     do("dump graph")
+    do("accumulate")
+

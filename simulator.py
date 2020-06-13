@@ -43,6 +43,7 @@ class Client:
     def __init__(self, ip: str):
         self.ip = ip
         self.router = None
+        self.incoming = 0
         # dict.__init__(self, ip=self.ip, router=self.router)
         # dict.__init__(self)
 
@@ -53,6 +54,7 @@ class Router:
         self.sec = 0
         self.logs = []
         self.log_lock = Lock()
+        self.incoming = 0
         self.neighbors = {}
         self.LSDB = nx.Graph()
         self.LSDB.add_node(self.id, object=self, typ='router')
@@ -114,6 +116,7 @@ class Router:
         while True:
             self.inp_sem.acquire()
             pkt = self.inp.pop()
+            self.incoming += 1
             self.submit_log(True, pkt)
             if monitor:
                 print('%d:' % self.id, pkt)
@@ -156,7 +159,7 @@ class Router:
                     self.flood(Packet(pkt.msg, 'lsa', self, self), [pkt.sender.id, pkt.msg[0], pkt.msg[1]])
 
             elif pkt.type.lower() == 'ping':
-                print(colored(self.id, 'yellow'), end=" ")
+                # print(colored(self.id, 'yellow'), end=" ")
                 try:
                     dst = self.routing_table[pkt.msg]
                 except KeyError:
@@ -168,7 +171,8 @@ class Router:
                     if not rcvd:
                         cprint("unreachable", 'red')
                 else:
-                    print(colored(dst, 'yellow'))
+                    graph.nodes.get(dst)['object'].incoming += 1
+                    # print(colored(dst, 'yellow'))
 
     def sec_passed(self):
         self.sec += 1
@@ -329,7 +333,7 @@ class Functions:
             src, dst = graph.nodes[src]['object'], graph.nodes[dst]['object']
         except KeyError:
             cprint("invalid ips", 'red')
-        cprint(colored(src.ip, 'yellow'), end=' ')
+        # cprint(colored(src.ip, 'yellow'), end=' ')
         router = graph.nodes[src.ip]['object'].router
         if not router:
             cprint("unreachable", 'red')
@@ -422,7 +426,11 @@ class Functions:
     @staticmethod
     def restart(cmd: str):
         global graph, commands
-        if input(colored("are you sure? [N/y]", 'magenta')) == 'y':
+        if len(cmd.split()) > 1:
+            global start_time
+            start_time = datetime.now()
+        # elif input(colored("are you sure? [N/y]", 'magenta')) == 'y':
+        else:
             if len(cmd.split()) == 1 or cmd.split()[1] != 'links':
                 graph = nx.Graph()
             else:
@@ -463,12 +471,20 @@ class Functions:
                 pos=nx.shell_layout(graph), node_size=150, width=0.5, node_shape='8', font_size=8)
         plt.savefig(path, dpi=300)
 
+    @staticmethod
+    def accumulate(_: str):
+        file = open("logs/%s/cumulative count.csv" % start_time.__str__(), 'w')
+        file.write("node,received packet\n")
+        for n in graph.nodes.data():
+            file.write("%s,%d\n" % (n[0], n[1]['object'].incoming))
+        file.close()
+
 
 if __name__ == '__main__':
     try:
         completer = MyCompleter(
             ["sec ", "add ", "router ", "client ", "connect ", "link ", "ping ", "monitor e", "monitor d",
-             "dump ", "load ", "topology", "state", "restart", "log", "graph"])
+             "dump ", "load ", "topology", "state", "restart", "log", "graph", "accumulate"])
         readline.set_completer(completer.complete)
         readline.parse_and_bind('tab: complete')
 
