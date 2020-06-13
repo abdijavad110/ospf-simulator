@@ -69,4 +69,5 @@ if __name__ == '__main__':
     r_pings = random_pings(r_clients, n_ping)
     apply_pings(r_pings)
     do("dump log 1 0 1")
+    do("dump topology")
     do("dump graph")

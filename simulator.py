@@ -77,7 +77,7 @@ class Router:
                 self.neighbors[self.nbr_in.msg['id']] = self.sec
                 # 2_way
                 self.send(Packet({'id': self.id, 'neighbors': self.neighbors.keys()}, 'hello', self, dst, nbr=True))
-                sleep(.1)
+                sleep(.01)
             else:
                 self.nbr_sem.acquire()
                 self.neighbors[self.nbr_in.msg['id']] = self.sec
@@ -249,11 +249,10 @@ class Functions:
         _, t = cmd.split()
         t = int(t)
         for _ in range(t):
-            sleep(.05)
             for n in graph.nodes.values():
                 if n['typ'] == 'router':
                     n['object'].sec_passed()
-                    sleep(.003)
+                    sleep(.03)
 
     @staticmethod
     def add_router(cmd: str):
@@ -356,7 +355,7 @@ class Functions:
             getattr(Functions, func).__call__(cmd)
             if normal_mode and not cmd.startswith("dump state"):
                 commands.append(cmd)
-            sleep(.1)
+            sleep(.01)
         except AttributeError:
             cprint("no function %s" % func, 'red')
         except Exception as e:
@@ -368,11 +367,18 @@ class Functions:
         try:
             path = cmd.split()[2]
         except IndexError:
-            path = "topology.json"
+            path = "logs/%s/topology.txt" % start_time.__str__()
         file = open(path, 'w')
-        dump_data = nx.readwrite.adjacency_data(graph)
         # fixme: make objects serializable
-        file.write(js.dumps(dump_data))
+        # dump_data = nx.readwrite.adjacency_data(graph)
+        # file.write(js.dumps(dump_data))
+        file.write("nodes:\n")
+        for n in graph.nodes:
+            file.write("%s\t" % str(n))
+        file.write("\n")
+        file.write("\nedges:\n")
+        for e1, e2 in graph.edges:
+            file.write("(%s, %s)\t" % (str(e1), str(e2)))
         file.close()
 
     @staticmethod
@@ -429,7 +435,10 @@ class Functions:
         ins, outs, just_ping = ins == '1', outs == '1', just_ping == '1'
         if not os.path.isdir("logs"):
             os.mkdir("logs")
-        csv_file = open("logs/packets_log " + datetime.now().__str__() + ".csv", 'w')
+        dir_path = "logs/%s" % start_time.__str__()
+        if not os.path.isdir(dir_path):
+            os.mkdir(dir_path)
+        csv_file = open("%s/packets_log.csv" % dir_path, 'w')
         writer = csv.DictWriter(csv_file, fieldnames=headers, extrasaction='ignore')
         writer.writeheader()
         total_logs = []
@@ -447,7 +456,7 @@ class Functions:
     @staticmethod
     def dump_graph(cmd: str):
         args = cmd.split()
-        path = args[2] if len(args) == 3 else ("logs/graph_" + datetime.now().__str__() + ".png")
+        path = args[2] if len(args) == 3 else ("logs/%s/graph.png" % start_time.__str__())
         routers_no = len(list(filter(lambda q: q[1]['typ'] == 'router', graph.nodes.data())))
         clients_no = len(graph.nodes) - routers_no
         nx.draw(graph, with_labels=True, node_color=['cyan'] * routers_no + ['green'] * clients_no,
