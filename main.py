@@ -424,13 +424,6 @@ class Functions:
 
 if __name__ == '__main__':
     start_time = datetime.now()
-    start_time = datetime.now()
-    start_time = datetime.now()
-    start_time = datetime.now()
-    start_time = datetime.now()
-    start_time = datetime.now()
-    start_time = datetime.now()
-    start_time = datetime.now()
     if not os.path.isdir("logs"):
         os.mkdir("logs")
     csv_file = open("logs/packets_log " + datetime.now().__str__() + ".csv", 'w')
