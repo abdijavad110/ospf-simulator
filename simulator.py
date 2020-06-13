@@ -6,22 +6,23 @@ import json as js
 import networkx as nx
 from time import sleep
 from datetime import datetime
+import matplotlib.pyplot as plt
 from termcolor import cprint, colored
 from threading import Thread, Semaphore, Lock
 
-logs = []
-links = []
-routers = []
 commands = []
 monitor = False
 graph = nx.Graph()
-log_lock = Lock()
+
+start_time = datetime.now()
+headers = ['time stamp', 'router', 'received packet?', 'sender', 'receiver', 'type', 'nbr?', 'lsdb?', 'message']
 
 
 class MyCompleter(object):
 
     def __init__(self, options):
         self.options = sorted(options)
+        self.matches = None
 
     def complete(self, text, state):
         if state == 0:  # on first trigger, build possible matches
@@ -50,6 +51,8 @@ class Router:
     def __init__(self, n: int):
         self.id = n
         self.sec = 0
+        self.logs = []
+        self.log_lock = Lock()
         self.neighbors = {}
         self.LSDB = nx.Graph()
         self.LSDB.add_node(self.id, object=self, typ='router')
@@ -94,7 +97,7 @@ class Router:
 
     def dijkstra(self):
         self.routing_table = {}
-        dijkstra = nx.single_source_dijkstra_path(self.LSDB, self.id, weight='weight')  # TODO check if weight based
+        dijkstra = nx.single_source_dijkstra_path(self.LSDB, self.id, weight='weight')
         for k, v in dijkstra.items():
             if type(k) == str:
                 self.routing_table[k] = v[1]
@@ -104,14 +107,14 @@ class Router:
         self.inp_sem.release()
 
     def send(self, pkt):
-        submit_log(self.id, False, pkt)
+        self.submit_log(False, pkt)
         graph.edges.get((self.id, pkt.receiver.id))['object'].deliver(pkt)
 
     def receive(self):
         while True:
             self.inp_sem.acquire()
             pkt = self.inp.pop()
-            submit_log(self.id, True, pkt)
+            self.submit_log(True, pkt)
             if monitor:
                 print('%d:' % self.id, pkt)
 
@@ -151,7 +154,6 @@ class Router:
                     else:
                         continue
                     self.flood(Packet(pkt.msg, 'lsa', self, self), [pkt.sender.id, pkt.msg[0], pkt.msg[1]])
-
 
             elif pkt.type.lower() == 'ping':
                 print(colored(self.id, 'yellow'), end=" ")
@@ -197,6 +199,15 @@ class Router:
             pkt.receiver = graph.nodes.get(d)['object']
             self.send(pkt)
 
+    def submit_log(self, is_in: bool, pkt):
+        self.log_lock.acquire()
+        self.logs.append(
+            dict(zip(headers, [(datetime.now() - start_time).__str__(), self.id, is_in,
+                               pkt.sender.id if type(pkt.sender) == Router else pkt.sender.ip,
+                               pkt.receiver.id if type(pkt.receiver) == Router else pkt.receiver.ip, pkt.type, pkt.nbr,
+                               pkt.lsdb, pkt.msg])))
+        self.log_lock.release()
+
 
 class Packet:
     def __init__(self, msg, typ: str, sender, receiver, nbr=False, lsdb=False):
@@ -232,22 +243,13 @@ class Link:
         return True
 
 
-def submit_log(router_id: int, is_in: bool, pkt: Packet):
-    log_lock.acquire()
-    writer.writerow(
-        dict(zip(headers, [(datetime.now() - start_time).__str__(), router_id, is_in,
-                           pkt.sender.id if type(pkt.sender) == Router else pkt.sender.ip,
-                           pkt.receiver.id if type(pkt.receiver) == Router else pkt.receiver.ip, pkt.type, pkt.nbr,
-                           pkt.lsdb, pkt.msg])))
-    log_lock.release()
-
-
 class Functions:
     @staticmethod
     def sec(cmd: str):
         _, t = cmd.split()
         t = int(t)
         for _ in range(t):
+            sleep(.05)
             for n in graph.nodes.values():
                 if n['typ'] == 'router':
                     n['object'].sec_passed()
@@ -261,7 +263,6 @@ class Functions:
             cprint("router %d exists" % n, 'red')
             return
         graph.add_node(n, object=Router(n), typ='router')
-        # todo check remained
 
     @staticmethod
     def add_client(cmd: str):
@@ -289,7 +290,7 @@ class Functions:
             cprint("link already exists between %s and %s." % (str(s1), str(s2)), 'yellow')
             return
 
-        if len(graph.adj.get(s1)) >= 10 or len(graph.adj.get(s2)) >= 10:
+        if len(graph.adj.get(s1)) >= 1000 or len(graph.adj.get(s2)) >= 1000:
             cprint("no empty interface found on router.", 'yellow')
             return
 
@@ -414,27 +415,51 @@ class Functions:
 
     @staticmethod
     def restart(cmd: str):
-        global graph, commands, links, routers
+        global graph, commands
         if input(colored("are you sure? [N/y]", 'magenta')) == 'y':
+            if len(cmd.split()) == 1 or cmd.split()[1] != 'links':
+                graph = nx.Graph()
+            else:
+                graph.remove_edges_from(graph.edges)
             commands = []
-            links = []
-            routers = []
-            graph = nx.Graph()
+
+    @staticmethod
+    def dump_log(cmd: str):
+        _, _, ins, outs, just_ping = cmd.split()
+        ins, outs, just_ping = ins == '1', outs == '1', just_ping == '1'
+        if not os.path.isdir("logs"):
+            os.mkdir("logs")
+        csv_file = open("logs/packets_log " + datetime.now().__str__() + ".csv", 'w')
+        writer = csv.DictWriter(csv_file, fieldnames=headers, extrasaction='ignore')
+        writer.writeheader()
+        total_logs = []
+        for n in graph.nodes.data():
+            if n[1]['typ'] != 'router':
+                continue
+            for l in n[1]['object'].logs:
+                if ((l['received packet?'] and ins) or (not l['received packet?'] and outs)) and (
+                        not just_ping or l['type'] == 'ping'):
+                    total_logs.append(l)
+        total_logs.sort(key=lambda q: q['time stamp'])
+        writer.writerows(total_logs)
+        csv_file.close()
+
+    @staticmethod
+    def dump_graph(cmd: str):
+        args = cmd.split()
+        path = args[2] if len(args) == 3 else ("logs/graph_" + datetime.now().__str__() + ".png")
+        routers_no = len(list(filter(lambda q: q[1]['typ'] == 'router', graph.nodes.data())))
+        clients_no = len(graph.nodes) - routers_no
+        nx.draw(graph, with_labels=True, node_color=['cyan'] * routers_no + ['green'] * clients_no,
+                pos=nx.shell_layout(graph), node_size=150, width=0.5, node_shape='8', font_size=8)
+        plt.savefig(path, dpi=300)
 
 
 if __name__ == '__main__':
-    start_time = datetime.now()
-    if not os.path.isdir("logs"):
-        os.mkdir("logs")
-    csv_file = open("logs/packets_log " + datetime.now().__str__() + ".csv", 'w')
-    headers = ['time stamp', 'router', 'received packet?', 'sender', 'receiver', 'type', 'nbr?', 'lsdb?', 'message']
-    writer = csv.DictWriter(csv_file, fieldnames=headers, extrasaction='ignore')
-    writer.writeheader()
-
     try:
         completer = MyCompleter(
             ["sec ", "add ", "router ", "client ", "connect ", "link ", "ping ", "monitor e", "monitor d",
-             "dump ", "load ", "topology", "state", "restart"])
+             "dump ", "load ", "topology", "state", "restart", "log", "graph"])
         readline.set_completer(completer.complete)
         readline.parse_and_bind('tab: complete')
 
@@ -446,5 +471,3 @@ if __name__ == '__main__':
         cprint('\nfinished.', 'cyan')
     except EOFError:
         cprint('\nfinished.', 'cyan')
-    finally:
-        csv_file.close()
