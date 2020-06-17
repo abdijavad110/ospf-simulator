@@ -3,7 +3,7 @@ import simulator
 from time import sleep
 from threading import Thread
 from termcolor import cprint
-from random import choice, randint, choices
+from random import choice, randint, choices, random
 from ipaddress import IPv4Address as ip
 
 
@@ -58,22 +58,43 @@ def random_pings(clients, ping_no=1):
     return ["ping %s %s" % tuple(map(lambda q: q[0], choices(clients, k=2))) for _ in range(ping_no)]
 
 
-def apply_pings(pings):
+disabled_links = []
+
+
+def apply_pings(pings, edges):
     for p in pings:
         Thread(target=do, args=(p,)).start()
+        rnd = random()
+        if rnd < 0.02:
+            s1, s2, _ = choice(edges)
+            # do("link %d %d d" % (s1, s2))
+            Thread(target=do, args=("link %d %d d" % (s1, s2),)).start()
+            disabled_links.append((s1, s2))
+        elif rnd < 0.4:
+            Thread(target=do, args=("sec 1",)).start()
+            # do("sec 1")
+
+        elif rnd > (1 - 0.005 * len(disabled_links)):
+            s1, s2 = choice(disabled_links)
+            # do("link %d %d e" % (s1, s2))
+            Thread(target=do, args=("link %d %d e" % (s1, s2),)).start()
+            disabled_links.remove((s1, s2))
 
 
 if __name__ == '__main__':
-    nn, ne, nc, bwm, bwM, n_ping = 10, 15, 10, 10, 20, 50
+    nn, ne, nc, bwm, bwM, n_ping = 8, 10, 10, 10, 20, 100
 
     r_nodes, r_edges, r_clients = random_topology(nn, ne, nc, bwm, bwM)
-    r_pings = random_pings(r_clients, n_ping)
     apply_topology(r_nodes, r_edges, r_clients)
-    for _ in range(100):
-        apply_pings(r_pings)
-    sleep(5)
+    do("dump graph logs/graph.png")
+    do("dump topology logs/topology.txt")
+    for r in range(20):
+        r_pings = random_pings(r_clients, n_ping)
+        for i in range(50):
+            print("iteration no. %d:%d" % (r, i))
+            apply_pings(r_pings, r_edges)
+            sleep(0.5)
+            do("restart time")
+    do("accumulate_all logs/cumulative_count.csv")
     do("dump log 1 0 1")
-    do("dump topology")
-    do("dump graph")
-    do("accumulate")
 

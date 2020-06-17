@@ -13,8 +13,10 @@ from threading import Thread, Semaphore, Lock
 commands = []
 monitor = False
 graph = nx.Graph()
+cumulative_count = None
 
 start_time = datetime.now()
+global_start_time = datetime.now()
 headers = ['time stamp', 'router', 'received packet?', 'sender', 'receiver', 'type', 'nbr?', 'lsdb?', 'message']
 
 
@@ -163,13 +165,13 @@ class Router:
                 try:
                     dst = self.routing_table[pkt.msg]
                 except KeyError:
-                    cprint("invalid", 'red')
+                    # cprint("invalid", 'red')
                     continue
                 if type(dst) == int:
                     pkt.sender, pkt.receiver = self, self.LSDB.nodes[dst]['object']
                     rcvd = graph.edges.get((self.id, dst))['object'].deliver(pkt)
-                    if not rcvd:
-                        cprint("unreachable", 'red')
+                    # if not rcvd:
+                        # cprint("unreachable", 'red')
                 else:
                     graph.nodes.get(dst)['object'].incoming += 1
                     # print(colored(dst, 'yellow'))
@@ -206,7 +208,7 @@ class Router:
     def submit_log(self, is_in: bool, pkt):
         self.log_lock.acquire()
         self.logs.append(
-            dict(zip(headers, [(datetime.now() - start_time).__str__(), self.id, is_in,
+            dict(zip(headers, [(datetime.now() - global_start_time).__str__(), self.id, is_in,
                                pkt.sender.id if type(pkt.sender) == Router else pkt.sender.ip,
                                pkt.receiver.id if type(pkt.receiver) == Router else pkt.receiver.ip, pkt.type, pkt.nbr,
                                pkt.lsdb, pkt.msg])))
@@ -256,7 +258,6 @@ class Functions:
             for n in graph.nodes.values():
                 if n['typ'] == 'router':
                     n['object'].sec_passed()
-                    sleep(.03)
 
     @staticmethod
     def add_router(cmd: str):
@@ -336,7 +337,7 @@ class Functions:
         # cprint(colored(src.ip, 'yellow'), end=' ')
         router = graph.nodes[src.ip]['object'].router
         if not router:
-            cprint("unreachable", 'red')
+            # cprint("unreachable", 'red')
             return
         router.give((Packet(dst.ip, 'ping', src, dst)))
 
@@ -381,8 +382,8 @@ class Functions:
             file.write("%s\t" % str(n))
         file.write("\n")
         file.write("\nedges:\n")
-        for e1, e2 in graph.edges:
-            file.write("(%s, %s)\t" % (str(e1), str(e2)))
+        for e1, e2, bw in graph.edges.data():
+            file.write("(%s, %s, %s)\t" % (str(e1), str(e2), str(bw['weight']) if 'weight' in bw.keys() else ""))
         file.close()
 
     @staticmethod
@@ -429,6 +430,14 @@ class Functions:
         if len(cmd.split()) > 1:
             global start_time
             start_time = datetime.now()
+            global cumulative_count
+            if not cumulative_count:
+                cumulative_count = [[n for n in graph.nodes]]
+            partial_count = []
+            for n in graph.nodes.data():
+                partial_count.append(n[1]['object'].incoming)
+                n[1]['object'].incoming = 0
+            cumulative_count.append(partial_count)
         # elif input(colored("are you sure? [N/y]", 'magenta')) == 'y':
         else:
             if len(cmd.split()) == 1 or cmd.split()[1] != 'links':
@@ -464,7 +473,12 @@ class Functions:
     @staticmethod
     def dump_graph(cmd: str):
         args = cmd.split()
-        path = args[2] if len(args) == 3 else ("logs/%s/graph.png" % start_time.__str__())
+        if not os.path.isdir("logs"):
+            os.mkdir("logs")
+        dir_path = "logs/%s" % start_time.__str__()
+        if not os.path.isdir(dir_path):
+            os.mkdir(dir_path)
+        path = args[2] if len(args) == 3 else ("%s/graph.png" % dir_path)
         routers_no = len(list(filter(lambda q: q[1]['typ'] == 'router', graph.nodes.data())))
         clients_no = len(graph.nodes) - routers_no
         nx.draw(graph, with_labels=True, node_color=['cyan'] * routers_no + ['green'] * clients_no,
@@ -472,11 +486,23 @@ class Functions:
         plt.savefig(path, dpi=300)
 
     @staticmethod
-    def accumulate(_: str):
-        file = open("logs/%s/cumulative count.csv" % start_time.__str__(), 'w')
+    def accumulate(cmd: str):
+        args = cmd.split()
+        path = args[1] if len(args) == 2 else ("logs/%s/cumulative_count.csv" % start_time.__str__())
+        file = open(path, 'w')
         file.write("node,received packet\n")
         for n in graph.nodes.data():
             file.write("%s,%d\n" % (n[0], n[1]['object'].incoming))
+        file.close()
+
+    @staticmethod
+    def accumulate_all(cmd: str):
+        args = cmd.split()
+        path = args[1] if len(args) == 2 else ("logs/%s/cumulative_all.csv" % start_time.__str__())
+        file = open(path, 'w')
+        global cumulative_count
+        writer = csv.writer(file)
+        writer.writerows(cumulative_count)
         file.close()
 
 
